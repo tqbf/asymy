@@ -8,10 +8,10 @@ require 'asymy'
 EventMachine::run {
     c = Asymy::Connection.new(:target => "localhost",
                               :port => 13306,
-                              :username => "user",
+                              :username => "dummy",
                               :password => "pass",
-                              :database => "mysql")
-    c.exec("select * from user") do |x, y|
+                              :database => "test")
+    c.exec("select * from edges") do |x, y|
         pp x
         pp y
     end

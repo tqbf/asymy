@@ -1,5 +1,6 @@
-require 'util'
-require 'constants'
-require 'messages'
-require 'connection'
+%w[util
+   constants
+   messages
+   connection].each {|f| require "#{ File.dirname(__FILE__) }/#{ f }" }
+
 

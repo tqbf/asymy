@@ -1,21 +1,21 @@
-require 'asymy'
+require File.dirname(__FILE__) + '/asymy'
 
 module Asymy
     class Framer < String
         include StringX
-        
+
         def complete?
             return false if (sz = size()) < 4
             return false if sz < (to_l24() + 4)
             return true
         end
-        
+
         def next_buffer
             sz = shift_l24()
-            num = slice!(0)
+            num = slice!(0).ord
             return num, slice!(0, sz).extend(StringX)
-        end        
-    end    
+        end
+    end
 
     module Packets
         class Packet
@@ -23,18 +23,18 @@ module Asymy
                 @@fields ||= Hash.new {|h, k| h[k] = []}
                 @@fields[self] << [n, t, default]
                 attr_accessor n
-            end                       
-            
-            def initialize(buf=nil)                
+            end
+
+            def initialize(buf=nil)
                 if buf
                     @@fields[self.class].each do |tup|
                         sym = "@#{ tup[0] }".intern
-                        if (t = tup[1].to_s)[0].chr == "r"
+                        if (t = tup[1].to_s)[0].ord.chr == "r"
                             instance_variable_set sym, buf.shift_r(t[1..-1].to_i)
                         else
                             instance_variable_set sym, buf.send("shift_#{ t }")
                         end
-                    end 
+                    end
                 else
                     @@fields[self.class].each do |tup|
                         if tup[2]
@@ -44,19 +44,19 @@ module Asymy
                     end
                 end
             end
-            
+
             def marshall(num=0)
                 m = @@fields[self.class].map do |tup|
                     sym = "@#{ tup[0] }".intern
                     t = tup[1].to_s
-                    t = "r" if t[0].chr == "r"
+                    t = "r" if t[0].ord.chr == "r"
                     instance_variable_get(sym).send("to_#{ t }")
                 end.join("")
 
                 (m.size.to_l24 + num.chr + m).extend(StringX)
             end
         end
-        
+
         class Greeting < Packet
             field :protocol_version, :l8
             field :server_version, :asciiz
@@ -69,7 +69,7 @@ module Asymy
             field :padding, :r13
             field :challenge_tail, :r12
         end
-        
+
         class Authenticate < Packet
             field :client_flags, :l32
             field :max_packet_size, :l32, 0x1000000
@@ -88,7 +88,7 @@ module Asymy
             field :warning_count, :l16
             field :message, :asciiz
         end
-        
+
         class Error < Packet
             field :field_count, :l8
             field :errno, :l16
@@ -96,12 +96,12 @@ module Asymy
             field :sqlstate, :r5
             field :message, :asciiz
         end
-        
+
         class ResultSet < Packet
             field :field_count, :lcb_int
             field :extra, :lcb_int
         end
-        
+
         class Field < Packet
             field :catalog, :lcstring
             field :db, :lcstring
@@ -118,16 +118,16 @@ module Asymy
             field :z2, :l16
             field :default, :lcstring
         end
-        
+
         class EOF < Packet
             field :field_count, :l8
             field :warning_count, :l16
             field :status_flags, :l16
         end
-        
+
         class RowData < Packet
         end
-        
+
         class ChangeUser < Packet
             field :command, :l8, Commands::CHANGE_USER
             field :name, :asciiz
@@ -135,16 +135,16 @@ module Asymy
             field :database, :asciiz
             field :charset, :l16, 0x8
         end
-        
+
         class ProcessKill < Packet
             field :command, :l8, Commands::PROCESS_KILL
             field :process, :l32
         end
-        
+
         class Command < Packet
             field :command, :l8
             field :arg, :asciiz
         end
-    end    
-    
+    end
+
 end

@@ -1,46 +1,49 @@
-require 'asymy'
+require File.dirname(__FILE__) + '/asymy'
+
 require 'stringio'
 
-# XXX for debugging
+# XXX for debugging --- ditch both these methods when we're done
 
 class Fixnum; def printable?; self >= 0x20 && self <= 0x7e; end; end
 
 class String
-    def hexdump(capture=false)
-        sio = StringIO.new
-        rem = size - 1
-        off = 0
+    if RUBY_VERSION[0..2] != '1.9'
+        def hexdump(capture=false)
+            sio = StringIO.new
+            rem = size - 1
+            off = 0
 
-        while rem > 0
-            pbuf = ""
-            pad = (15 - rem) if rem < 16
-            pad ||= 0
+            while rem > 0
+                pbuf = ""
+                pad = (15 - rem) if rem < 16
+                pad ||= 0
 
-            sio.write(("0" * (8 - (x = off.to_s(16)).size)) + x + "  ")
+                sio.write(("0" * (8 - (x = off.to_s(16)).size)) + x + "  ")
 
-            0.upto(15-pad) do |i|
-                c = self[off]
-                x = c.to_s(16)
-                sio.write(("0" * (2 - x.size)) + x + " ")
-                if c.printable?
-                    pbuf << c
-                else
-                    pbuf << "."
+                0.upto(15-pad) do |i|
+                    c = self[off]
+                    x = c.to_s(16)
+                    sio.write(("0" * (2 - x.size)) + x + " ")
+                    if c.printable?
+                        pbuf << c
+                    else
+                        pbuf << "."
+                    end
+                    off += 1
+                    rem -= 1
+                    sio.write(" ") if i == 7
                 end
-                off += 1
-                rem -= 1
-                sio.write(" ") if i == 7
+
+                sio.write("-- " * pad) if pad > 0
+                sio.write(" |#{ pbuf }|\n")
             end
 
-            sio.write("-- " * pad) if pad > 0
-            sio.write(" |#{ pbuf }|\n")
-        end
-
-        sio.rewind()
-        if capture
-            sio.read()
-        else
-            puts sio.read()
+            sio.rewind()
+            if capture
+                sio.read()
+            else
+                puts sio.read()
+            end
         end
     end
 end
@@ -117,7 +120,7 @@ module Asymy
             def receive_packet(num, packet)
                 # special case errors until I waste the time to scan them to see if they're
                 # 4.0 or 4.1 packets. XXX
-                if packet[0] == 0xFF
+                if packet[0].ord == 0xFF
                     self.error = packet[3..-1]
                     self.state = :error
                 end
@@ -142,13 +145,13 @@ module Asymy
                     # XXX just ignore for now
                     self.state = :awaiting_fields
                 when :awaiting_fields
-                    if packet[0] == 0xfe
+                    if packet[0].ord == 0xfe
                         self.state = :awaiting_rows
                     else
                         handle_field(num, Packets::Field.new(packet))
                     end
                 when :awaiting_rows
-                    if packet[0] == 0xfe
+                    if packet[0].ord == 0xfe
                         @cb.call(@fields, @rows)
                         @fields = nil
                         @rows = nil

@@ -145,6 +145,18 @@ module Asymy
             field :command, :l8
             field :arg, :asciiz
         end
+
+        class PrepareStatement < Packet
+            field :command, :l8, Commands::STMT_PREPARE
+            field :query, :asciiz
+        end
+
+        class PrepareOk < Packet
+            field :field_count, :l8
+            field :stmt_id, :l32
+            field :columns, :l16
+            field :parameters, :l16
+        end
     end
 
 end

@@ -23,7 +23,63 @@ class Numeric
     def ord; self; end unless RUBY_VERSION[0..2] == '1.9'
 end
 
+# XXX for debugging --- ditch both these methods when we're done
+
+class Fixnum; def printable?; self >= 0x20 && self <= 0x7e; end; end
+
+class String
+    if RUBY_VERSION[0..2] != '1.9'
+        def hexdump(capture=false)
+            sio = StringIO.new
+            rem = size - 1
+            off = 0
+
+            while rem > 0
+                pbuf = ""
+                pad = (15 - rem) if rem < 16
+                pad ||= 0
+
+                sio.write(("0" * (8 - (x = off.to_s(16)).size)) + x + "  ")
+
+                0.upto(15-pad) do |i|
+                    c = self[off]
+                    x = c.to_s(16)
+                    sio.write(("0" * (2 - x.size)) + x + " ")
+                    if c.printable?
+                        pbuf << c
+                    else
+                        pbuf << "."
+                    end
+                    off += 1
+                    rem -= 1
+                    sio.write(" ") if i == 7
+                end
+
+                sio.write("-- " * pad) if pad > 0
+                sio.write(" |#{ pbuf }|\n")
+            end
+
+            sio.rewind()
+            if capture
+                sio.read()
+            else
+                puts sio.read()
+            end
+        end
+    end
+end
+
 module Asymy
+    module ModuleX
+        def to_name_hash
+            @name_hash ||= constants.map {|k| [k.intern, const_get(k.intern)]}.to_hash
+        end
+
+        def to_key_hash
+            @key_hash ||= constants.map {|k| [const_get(k.intern), k.intern]}.to_hash
+        end
+    end
+
     module StringX
         def crypt(nonce)
             sha = lambda {|k| OpenSSL::Digest::SHA1.new(k).digest }

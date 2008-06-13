@@ -80,6 +80,7 @@ module Asymy
         STRING = 0xfe
         GEOMETRY = 0xff
     end
+    FieldTypes.extend(ModuleX)
 
     module FieldFlags
         NOT_NULL = 0x0001

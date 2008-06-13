@@ -1,53 +1,5 @@
 require File.dirname(__FILE__) + '/asymy'
 
-require 'stringio'
-
-# XXX for debugging --- ditch both these methods when we're done
-
-class Fixnum; def printable?; self >= 0x20 && self <= 0x7e; end; end
-
-class String
-    if RUBY_VERSION[0..2] != '1.9'
-        def hexdump(capture=false)
-            sio = StringIO.new
-            rem = size - 1
-            off = 0
-
-            while rem > 0
-                pbuf = ""
-                pad = (15 - rem) if rem < 16
-                pad ||= 0
-
-                sio.write(("0" * (8 - (x = off.to_s(16)).size)) + x + "  ")
-
-                0.upto(15-pad) do |i|
-                    c = self[off]
-                    x = c.to_s(16)
-                    sio.write(("0" * (2 - x.size)) + x + " ")
-                    if c.printable?
-                        pbuf << c
-                    else
-                        pbuf << "."
-                    end
-                    off += 1
-                    rem -= 1
-                    sio.write(" ") if i == 7
-                end
-
-                sio.write("-- " * pad) if pad > 0
-                sio.write(" |#{ pbuf }|\n")
-            end
-
-            sio.rewind()
-            if capture
-                sio.read()
-            else
-                puts sio.read()
-            end
-        end
-    end
-end
-
 module Asymy
 
     # I'm thinking, one per connection
@@ -82,8 +34,18 @@ module Asymy
         # block argument that receives the results, in two arguments, fields (an array of hashes)
         # and rows (an array of strings)
         def exec(cmd, &block)
-            @queue << [cmd.extend(StringX), block]
-            inject if ready?
+            @queue << [cmd.extend(StringX), block, Commands::QUERY]
+            @fp.inject
+        end
+
+        def prepare(cmd, &block)
+            @queue << [cmd.extend(StringX), block, Commands::STMT_PREPARE]
+            @fp.inject
+        end
+
+        def execute_prepared(args, &block)
+            @queue << [args, block, Commands::STMT_EXECUTE]
+            @fp.inject
         end
 
         # no user-servicable parts below (attrs used to communicate with module)
@@ -125,6 +87,9 @@ module Asymy
                     self.state = :error
                 end
 
+                def packet.eof?; self[0].ord == 0xfe; end
+                def packet.ok?; self[0].ord == 0x00; end
+
                 case self.state
                 when :preauth
                     handle_preauth(num, Packets::Greeting.new(packet))
@@ -145,22 +110,46 @@ module Asymy
                     # XXX just ignore for now
                     self.state = :awaiting_fields
                 when :awaiting_fields
-                    if packet[0].ord == 0xfe
+                    if packet.eof?
                         self.state = :awaiting_rows
                     else
                         handle_field(num, Packets::Field.new(packet))
                     end
                 when :awaiting_rows
-                    if packet[0].ord == 0xfe
+                    if packet.eof?
                         @cb.call(@fields, @rows)
                         @fields = nil
                         @rows = nil
-                        self.state = :ready
-                        inject
+                        ready!
                     else
                         # rows have a variable number of variable-length strings, and no other
                         # structure, so just hand the raw data off.
                         handle_row(num, packet)
+                    end
+                when :awaiting_statement_handle
+                    if packet.ok?
+                        handle_statement_handle(num, Packets::PrepareOk.new(packet))
+                    else
+                        # XXX handle this case
+                        @state = :error
+                    end
+                when :awaiting_prepared_params
+                    if packet.eof?
+                        @state = :waiting_prepared_fields
+                    else
+                        # I cannot for the life of me figure out what I'm supposed
+                        # to do with these --- using mysql-ruby, I can't get them
+                        # to change based on their type. Why does MySQL send them?
+                        # I figured it'd be to let me enforce types on the params.
+                    end
+                when :awaiting_prepared_fields
+                    if packet.eof?
+                        @cb.call(@stmt)
+                        @cb, @stmt, @expect_params, @expect_columns = nil, nil, nil, nil
+                        ready!
+                    else
+                        # I guess I could cache these? But why bother? MySQL is just
+                        # going to send them again. This protocol confuses and infuriates us!
                     end
                 when :error
                     pp self.error
@@ -169,14 +158,32 @@ module Asymy
                 end
             end
 
+            def ready!; self.state = :ready; inject; end
+
             def inject
+                return if not ready?
+
+                # this is going to get untidy real fast XXX
+
                 if(now = self.queue.slice!(0))
                     @cb = now[1]
-                    self.state = :awaiting_result_set
-                    p = Packets::Command.new
-                    p.command = Commands::QUERY
-                    p.arg = now[0]
-                    send_data(p.marshall)
+                    case now[2]
+                    when Commands::QUERY
+                        self.state = :awaiting_result_set
+                        p = Packets::Command.new
+                        p.command = Commands::QUERY
+                        p.arg = now[0]
+                        send_data(p.marshall)
+                    when Commands::STMT_PREPARE
+                        self.state = :awaiting_statement_handle
+                        p = Packets::Prepare.new
+                        p.query = now[0]
+                        send_data(p.marshall)
+                    when Commands::STMT_EXECUTE
+
+                    else
+                        raise "wtf?"
+                    end
                 end
             end
 
@@ -206,8 +213,7 @@ module Asymy
             end
 
             def handle_postauth(num, ok)
-                self.state = :ready
-                inject
+                ready!
             end
 
             def handle_field(num, field)
@@ -233,11 +239,23 @@ module Asymy
                 @rows << rv
             end
 
+            def handle_statement_handle(num, ok)
+                @stmt = PreparedStatement.new(:backpointer => @bp,
+                                              :handle => ok.stmt_id)
+                @expect_params = @stmt.parameters
+                @expect_columns = @stmt.columns
+                if @expect_params > 0
+                    @state = :awaiting_prepared_params
+                else
+                    @state = :awaiting_prepared_columns
+                end
+            end
+
             def method_missing(meth, *args); @bp.send(meth, *args); end
         end
 
         def reco
-            EventMachine::connect(@target, @port, Session) {|c| c.bp = self}
+            EventMachine::connect(@target, @port, Session) {|c| c.bp = self; @fp = c;}
         end
 
         public
